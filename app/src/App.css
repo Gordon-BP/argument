@@ -1,7 +1,7 @@
 .chat-app {
           display: flex;
           flex-direction: column;
-          height: 100vh;
+          height: 92vh;
           max-width: 800px;
           margin: 0 auto;
           padding: 20px;

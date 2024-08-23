@@ -89,7 +89,7 @@ func StreamResponses(conversationId string, userMessage string,
 	// Add the API key to the header
 	apiErr := utils.LoadEnv(".env")
 	if apiErr != nil {
-		log.Fatal("Error loading .env file:", err)
+		log.Fatal("Error loading .env file:", apiErr)
 	}
 
 	apiKey := os.Getenv("GROQ_API_KEY")

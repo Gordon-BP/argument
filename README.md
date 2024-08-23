@@ -68,10 +68,43 @@ entertaining chatbot that has a monty python argument with you
 # Let's break the POC up into specific milestones and user stories
 
 ### Feature: Users can send messages to an LLM, and receive replies
-#### Step 1: Sending and receiving text messages using REST API
+#### Step 1: Sending and receiving text messages using websockets
 Requires:
     1. Frontend that can accept text inputs
     2. Frontend that sends text messages to the server
     3. Server that forwards the messages to the LLM
     4. Server that streams the message from the LLM into the websocket
     5. Frontend that mutates a text element to display text as it comes in from the websocket
+DONE! Thanks to some helpful LLMs I was able to build a simple react interface, and use a Go backend to stream text from Groq to the interface.
+Some things I learned:
+* Websockets are both more simple and more complicated than I thought. They're just chunks of data that come in a sequence, how cool! But also, that means that ou have to parse them as they come, and all the responsibility for that is on you. This is great when you want control, but also means that you have more code to maintain. Luckily, sticking to JSON makes this easier.
+* Groq is fast! With their llama 3 8b "instant" model, even though I was streaming the output it would take less than 1 second to come through. This made it look like the content wasn't even being streamed, but instead jsut coming through in batch like a traditional REST API. I had to add an artificial wait time between chunks to make the streaming effect more obvious.
+* A little bit of CSS goes a long way. Early on I had GPT upgrade my basic form into a proper chat interface, and that made everything so much easier.
+* Go _can_ power a react app! And it was honestly quite simple. I'm still learning Go so I relied heavily on LLMs for this. But I found that they were able to take instruction well and product workable code. Will me not knowing Go very well come back and bite me later in the project? Probably! But right now I'm really enjoying it.
+
+#### Step 2: Sending and receiving voice messages using websockets
+Requires:
+    1. Frontend that can accept audio input
+    2. Frontend that streams audio to the server
+    3. Server that streams audio to transcription service
+    4. Server that sends completed user transcription to an LLM
+    5. Server that sends LLM reply chunks to a text to speech service
+    7. Server that streams audio from text to speech service to the frontend
+    8. Frontend that plays audio from a stream
+
+TIL that there is no such thing as streaming TTS. Instead, you have to chunk your text by the sentence and send each chunk to the TTS service.
+TIL also that you can run a small whisper model _entirely in your web browser_. This is cool!
+##### But how do you detect when to stop transcribing and send the text?
+Simple solution: Don't bother with pause detection!
+    * Transcribe text straight into the text input box, and then make the user click send
+    * Make the user click a microphone button to start, and then click again to stop
+    * Make the user hold down space bar to talk and submit the audio when it is let up
+I'm sure there are more sophisticated methods out there but honestly I think the spacebar method is best. 
+PLUS I already have react code written for that!
+
+So for the spec, I'm thinking:
+    1. Use deepgram for TTS and STT. They have a streaming STT API with a golang SDK
+    2. Make the user press and hold space bar while they talk.
+    3. (Optional but would be really cool) Stream the transcription into the UI somehow
+    4. Break up llm response by the sentence, and send each sentence to deepgram.
+    5. Try to stream directly from the TTS to the frontend, but you'll probably have to set up a buffer file somewhere in case the TTS is fast.
