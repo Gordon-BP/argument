@@ -53,7 +53,8 @@ entertaining chatbot that has a monty python argument with you
 
 ## Backend
 * Use a starter or pre built app instead of building your own UI
-* Experiment to see if WebRTC _really_ is better than a REST API
+* Experiment to see if WebRTC _really_ is better than normal webhooks and REST API
+* I really, _really_ want to use Golang but that adds unnecessary complexity
 
 ## Tools
 * Do everything in NodeJS, that seems to be the common language that all libraries and SDKs support
@@ -62,3 +63,15 @@ entertaining chatbot that has a monty python argument with you
     * Yes it might not have as solid reasoning capabilities but this is an entertainment app
 * Daily for the pre built app and webRTC 
 * Deepgram for streamed transcription and streamed text-to-speech
+
+
+# Let's break the POC up into specific milestones and user stories
+
+### Feature: Users can send messages to an LLM, and receive replies
+#### Step 1: Sending and receiving text messages using REST API
+Requires:
+    1. Frontend that can accept text inputs
+    2. Frontend that sends text messages to the server
+    3. Server that forwards the messages to the LLM
+    4. Server that streams the message from the LLM into the websocket
+    5. Frontend that mutates a text element to display text as it comes in from the websocket
