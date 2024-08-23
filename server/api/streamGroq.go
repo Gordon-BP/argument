@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -12,16 +13,10 @@ import (
 	"strings"
 )
 
-type MessageObj struct {
-	Content *string `json:"content,omitempty"` // Optional field
-	Name    *string `json:"name,omitempty"`    // Optional field
-	Role    *string `json:"role,omitempty"`    // Optional field
-}
-
 type GroqPostData struct {
-	Messages []MessageObj `json:"messages"` // Change to a slice directly
-	Model    string       `json:"model"`    // Make field exported with JSON tag
-	Stream   bool         `json:"stream"`   // Make field exported with JSON tag
+	Messages []utils.MessageObj `json:"messages"` // Change to a slice directly
+	Model    string             `json:"model"`    // Make field exported with JSON tag
+	Stream   bool               `json:"stream"`   // Make field exported with JSON tag
 }
 type Choice struct {
 	Delta struct {
@@ -32,12 +27,50 @@ type Data struct {
 	Choices []Choice `json:"choices"`
 }
 
-func StreamResponses(messages []MessageObj, resultsChan chan<- string) {
-	url := "https://api.groq.com/openai/v1/chat/completions" // Replace with your endpoint
+func StreamResponses(conversationId string, userMessage string,
+	resultsChan chan<- string) {
+	url := "https://api.groq.com/openai/v1/chat/completions"
 
-	// Create the GroqPostData object with messages directly as a slice
+	// Get conversation history
+	history, err := utils.GetConversationHistory(conversationId)
+	if err != nil {
+		log.Printf("Failed to get conversation history: %v", err)
+		history = []utils.MessageObj{}
+	}
+	// Get the next message index
+	nextIndex, err := utils.GetNextMessageIndex(conversationId)
+	if err != nil {
+		log.Printf("Failed to get next message index: %v", err)
+		nextIndex = 0
+	}
+
+	// Add the new user message
+	userMsg := utils.MessageObj{
+		Role:    "user",
+		Name:    "user",
+		Content: userMessage,
+	}
+	messages := append(history, userMsg)
+
+	// Save the user message to the database
+	err = utils.SaveMessage(conversationId, nextIndex, userMsg.Role, userMsg.Name, userMsg.Content)
+	if err != nil {
+		log.Printf("Failed to save user message: %v", err)
+	}
+	nextIndex++
+
+	// Convert db.MessageObj to MessageObj for the API request
+	apiMessages := make([]utils.MessageObj, len(messages))
+	for i, msg := range messages {
+		apiMessages[i] = utils.MessageObj{
+			Role:    msg.Role,
+			Name:    msg.Name,
+			Content: msg.Content,
+		}
+	}
+
 	groqPostData := GroqPostData{
-		Messages: messages, // Set messages directly as a slice
+		Messages: apiMessages,
 		Model:    "llama-3.1-8b-instant",
 		Stream:   true,
 	}
@@ -70,27 +103,37 @@ func StreamResponses(messages []MessageObj, resultsChan chan<- string) {
 	}
 	defer resp.Body.Close()
 
-	// Initialize a string buffer to collect content
-	var contentBuffer strings.Builder
-
-	// Read the response body incrementally
-	reader := io.Reader(resp.Body)
-
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(reader)
-	if err != nil {
-		log.Fatalf("Failed to read response: %v", err)
+	// Check the response status code
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("API request failed with status code: %d",
+			resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Response body: %s", string(body))
+		close(resultsChan)
+		return
 	}
-	rawResponse := buf.String()
+	// Initialize a string buffer to collect the entire bot response
+	var botResponseBuffer strings.Builder
+	reader := bufio.NewReader(resp.Body)
 
-	for _, line := range strings.Split(rawResponse, "\n") {
-		if !strings.HasPrefix(line, "data: ") {
-			continue // Skip lines that don’t start with "data: "
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			log.Printf("Error reading response: %v", err)
+			break
 		}
 
-		line = strings.TrimSpace(line[6:]) // Remove the "data: " prefix and trim whitespace
-		if line == "" {
-			continue // Skip empty lines
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		line = strings.TrimPrefix(line, "data: ")
+		if line == "[DONE]" {
+			break
 		}
 
 		var data Data
@@ -99,25 +142,35 @@ func StreamResponses(messages []MessageObj, resultsChan chan<- string) {
 			continue
 		}
 
-		// Ensure we only send JSON for the first choice available
-		if len(data.Choices) > 0 {
+		if len(data.Choices) > 0 && data.Choices[0].Delta.Content !=
+			"" {
 			messageResponse := map[string]string{
 				"text": data.Choices[0].Delta.Content,
 			}
+			botResponseBuffer.WriteString(data.Choices[0].Delta.Content) // Accumulate the bot's response
 
-			// Marshal the response to JSON and send it back through the channel
 			responseJson, err := json.Marshal(messageResponse)
 			if err != nil {
 				log.Printf("Failed to marshal JSON response: %v", err)
 				continue
 			}
 
-			resultsChan <- string(responseJson) // Send the JSON string back without additional parsing
+			resultsChan <- string(responseJson)
 		}
+	}
+	// Save the bot's response to the database
+	botResponse := botResponseBuffer.String()
+	if botResponse != "" {
+		err := utils.SaveMessage(conversationId, nextIndex, "assistant", "assistant", botResponse)
+		if err != nil {
+			log.Printf("Failed to save bot response: %v", err)
+		} else {
+			log.Printf("Bot response saved successfully. Length: %d",
+				len(botResponse))
+		}
+	} else {
+		log.Println("Warning: Bot response was empty")
 	}
 	// Close the results channel when done to signal completion
 	close(resultsChan)
-
-	// Print the accumulated content to stdout
-	log.Println(contentBuffer.String())
 }
