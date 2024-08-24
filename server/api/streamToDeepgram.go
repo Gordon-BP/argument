@@ -80,14 +80,10 @@ func SendToClient(transcriptChan chan string, conn *websocket.Conn, doneChan cha
 		fullTranscript += result
 
 		// Create the JSON structure
-		response := struct {
-			Text string `json:"text"`
-			Role string `json:"role"`
-			Name string `json:"name"`
-		}{
-			Text: result,
-			Role: "user",
-			Name: "user",
+		response := utils.MessageObj{
+			Content: result,
+			Role:    "user",
+			Name:    "user",
 		}
 
 		// Marshal the struct to JSON

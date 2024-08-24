@@ -144,18 +144,8 @@ func StreamResponses(conversationId string, userMessage string,
 
 		if len(data.Choices) > 0 && data.Choices[0].Delta.Content !=
 			"" {
-			messageResponse := map[string]string{
-				"text": data.Choices[0].Delta.Content,
-			}
 			botResponseBuffer.WriteString(data.Choices[0].Delta.Content) // Accumulate the bot's response
-
-			responseJson, err := json.Marshal(messageResponse)
-			if err != nil {
-				log.Printf("Failed to marshal JSON response: %v", err)
-				continue
-			}
-
-			resultsChan <- string(responseJson)
+			resultsChan <- string(data.Choices[0].Delta.Content)
 		}
 	}
 	// Save the bot's response to the database

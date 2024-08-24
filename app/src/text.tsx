@@ -11,6 +11,12 @@ interface UseTextStreamProps {
   chunkDelay?: number;
 }
 
+type IncomingChunk = {
+  content: string;
+  role: string;
+  name: string;
+};
+
 export const useTextStream = ({
   socket,
   conversationId,
@@ -19,7 +25,8 @@ export const useTextStream = ({
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentBotMessage, setCurrentBotMessage] = useState('');
-  const [incomingChunks, setIncomingChunks] = useState<string[]>([]);
+  const [currentUserMessage, setCurrentUserMessage] = useState('');
+  const [incomingChunks, setIncomingChunks] = useState<IncomingChunk[]>([]);
 
   const handleSubmit = () => {
     if (input.trim()) {
@@ -36,6 +43,7 @@ export const useTextStream = ({
 
       setInput('');
       setCurrentBotMessage('');
+      setCurrentUserMessage(''); // Clear user message after sending
       setIncomingChunks([]);
     }
   };
@@ -44,8 +52,11 @@ export const useTextStream = ({
     socket.onmessage = (event) => {
       try {
         const parsedMessage = JSON.parse(event.data);
-        if (parsedMessage && typeof parsedMessage.text === 'string') {
-          setIncomingChunks((prev) => [...prev, parsedMessage.text]);
+        console.log(parsedMessage);
+
+        if (parsedMessage && typeof parsedMessage.content === 'string') {
+          // Handle incoming chunks
+          setIncomingChunks((prev) => [...prev, parsedMessage]);
         }
       } catch (error) {
         console.error('Error parsing message:', error);
@@ -61,38 +72,49 @@ export const useTextStream = ({
     if (incomingChunks.length > 0) {
       const timer = setTimeout(() => {
         const chunk = incomingChunks[0];
-        setCurrentBotMessage((prev) => prev + chunk);
+
+        setMessages((prevMessages) => {
+          const lastMessageIndex = prevMessages.length - 1;
+          const lastMessage = prevMessages[lastMessageIndex];
+
+          if (chunk.role === 'user') {
+            console.log(`User message: ${chunk.content}`);
+
+            if (lastMessage && lastMessage.isUser) {
+              // Update the last user message if it exists
+              const updatedMessages = [...prevMessages];
+              updatedMessages[lastMessageIndex] = {
+                ...lastMessage,
+                text: lastMessage.text + chunk.content,
+              };
+              return updatedMessages;
+            } else {
+              // Add a new user message if one doesn't exist
+              return [...prevMessages, { text: chunk.content, isUser: true }];
+            }
+          } else if (chunk.role === 'bot') {
+            console.log(`Bot message: ${chunk.content}`);
+            const updatedBotMessage = currentBotMessage + ' ' + chunk.content;
+
+            setCurrentBotMessage(updatedBotMessage);
+
+          }
+
+          return prevMessages;
+        });
+
         setIncomingChunks((prev) => prev.slice(1));
       }, chunkDelay);
 
       return () => clearTimeout(timer);
     }
-  }, [incomingChunks, currentBotMessage, chunkDelay]);
-
-  useEffect(() => {
-    if (currentBotMessage && incomingChunks.length === 0) {
-      const timer = setTimeout(() => {
-        const newMessages = [
-          ...messages,
-          {
-            text: currentBotMessage,
-            isUser: false,
-          },
-        ];
-        setMessages(newMessages);
-        setCurrentBotMessage('');
-      }, chunkDelay);
-      return () => clearTimeout(timer);
-    }
-  }, [currentBotMessage, incomingChunks, messages, chunkDelay]);
-
-
-
+  }, [incomingChunks, chunkDelay, currentBotMessage]);
   return {
     input,
     setInput,
     messages,
     currentBotMessage,
+    currentUserMessage, // Include currentUserMessage in the return object
     handleSubmit,
   };
 };

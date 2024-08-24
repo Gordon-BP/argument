@@ -12,7 +12,7 @@ const App: React.FC<AppProps> = ({ socket }) => {
   const [status, setStatus] = useState<string>('Press and hold Space Bar to record');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { input, setInput, messages, currentBotMessage, handleSubmit } = useTextStream({
+  const { input, setInput, messages, currentBotMessage, currentUserMessage, handleSubmit } = useTextStream({
     socket,
     conversationId,
   });
@@ -24,7 +24,7 @@ const App: React.FC<AppProps> = ({ socket }) => {
   useEffect(() => {
     // Smooth scrolling
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, currentBotMessage]);
+  }, [messages, currentBotMessage, currentUserMessage]);
 
   return (
     <div className="chat-app">
@@ -32,11 +32,15 @@ const App: React.FC<AppProps> = ({ socket }) => {
       <p>Conversation ID: {conversationId}</p>
       <div className="chat-messages">
         {messages.map((message, index) => (
-          <div key={index} className={`message ${message.isUser ?
-            'user' : 'bot'}`}>
+          <div key={index} className={`message ${message.isUser ? 'user' : 'bot'}`}>
             {message.text}
           </div>
         ))}
+        {currentUserMessage && (
+          <div className='message user'>
+            {currentUserMessage}
+          </div>
+        )}
         {currentBotMessage && (
           <div className="message bot">
             {currentBotMessage}

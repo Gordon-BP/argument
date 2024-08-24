@@ -104,7 +104,16 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 			log.Println("Streaming response back to client...")
 			for result := range resultsChan {
-				if err := conn.WriteMessage(websocket.TextMessage, []byte(result)); err != nil {
+				msg := utils.MessageObj{
+					Content: result,
+					Role:    "bot",
+					Name:    "bot",
+				}
+				msgJSON, err := json.Marshal(msg)
+				if err != nil {
+					log.Println("Error marshalling JSON:", err)
+				}
+				if err := conn.WriteMessage(websocket.TextMessage, msgJSON); err != nil {
 					log.Println(err)
 					return
 				}
