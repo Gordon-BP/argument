@@ -50,13 +50,14 @@ const AudioRecorder: React.FC<AudioProps> = ({ socket, conversationId,
   };
 
   const startRecording = () => {
-    audioRecorder?.start(200);
+    audioRecorder?.start(1000);
     setRecording(true);
     onUpdateStatus('Recording started...');
   };
 
   const stopRecording = () => {
     audioRecorder?.stop();
+    socket.send(JSON.stringify({ type: 'audioEnd', conversationId }));
   };
 
   // Keyboard event handlers for starting and stopping the audio recorder.

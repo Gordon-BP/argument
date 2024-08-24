@@ -60,26 +60,53 @@ func listenForResponses(conn *websocket.Conn, outChan chan<- string) {
 			continue
 		}
 
-		if response.Type == "Results" &&
-			len(response.Channel.Alternatives) > 0 {
+		if response.Type == "Results" && len(response.Channel.Alternatives) > 0 {
 			for _, alternative := range response.Channel.Alternatives {
 				if alternative.Transcript != "" {
-					outChan <- alternative.Transcript // Send the transcript through the channel
 					log.Println("Transcript sent to channel:", alternative.Transcript)
+					outChan <- alternative.Transcript // Send the transcript through the channel
 				}
 			}
 		}
 	}
 }
 
-// StreamToDeepgram sends audio data to an existing Deepgram WebSocket connection
-func StreamToDeepgram(conn *websocket.Conn, audioData []byte) error {
-	log.Printf("Ready to send %d bytes of data to Deepgram", len(audioData))
-	// Send audio data
-	if err := conn.WriteMessage(websocket.BinaryMessage, audioData); err != nil {
-		return fmt.Errorf("failed to send audio data to Deepgram: %w",
-			err)
+// Send transcript output back to the client in the right data shape
+func SendToClient(transcriptChan chan string, conn *websocket.Conn, doneChan chan string) {
+	var fullTranscript string // Accumulate the transcript
+
+	for result := range transcriptChan {
+		log.Println("Transcript:", result)
+		fullTranscript += result
+
+		// Create the JSON structure
+		response := struct {
+			Text string `json:"text"`
+			Role string `json:"role"`
+			Name string `json:"name"`
+		}{
+			Text: result,
+			Role: "user",
+			Name: "user",
+		}
+
+		// Marshal the struct to JSON
+		jsonResponse, err := json.Marshal(response)
+		if err != nil {
+			log.Println("Error marshaling JSON:", err)
+			continue
+		}
+
+		// Send the JSON response over the WebSocket
+		if err := conn.WriteMessage(websocket.TextMessage, jsonResponse); err != nil {
+			log.Println("Error sending transcript:", err)
+			break // Stop processing if there's an error sending the message
+		}
 	}
-	log.Println("Audio data sent, waiting for responses...")
-	return nil
+
+	// After the loop ends, send the full transcript to the doneChan
+	log.Println("Sending final transcript to doneChan")
+	doneChan <- fullTranscript
+	log.Println("Final transcript sent, closing doneChan")
+	close(doneChan) // Close the doneChan to signal completion
 }
