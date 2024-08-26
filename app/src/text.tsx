@@ -9,6 +9,7 @@ interface UseTextStreamProps {
   socket: WebSocket;
   conversationId: string;
   chunkDelay?: number;
+  audioElement: React.RefObject<HTMLAudioElement>
 }
 
 type IncomingChunk = {
@@ -21,6 +22,7 @@ export const useTextStream = ({
   socket,
   conversationId,
   chunkDelay = 20, // Default chunk delay of 20 ms
+  audioElement,
 }: UseTextStreamProps) => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -28,7 +30,7 @@ export const useTextStream = ({
   const [currentUserMessage, setCurrentUserMessage] = useState('');
   const [incomingChunks, setIncomingChunks] = useState<IncomingChunk[]>([]);
   const audioQueue = useRef<Blob[]>([]); // Queue for audio blobs
-  const audioElement = useRef<HTMLAudioElement | null>(null);
+  //const audioElement = useRef<HTMLAudioElement | null>(null);
 
   const handleSubmit = () => {
     if (input.trim()) {
@@ -62,8 +64,19 @@ export const useTextStream = ({
 
   useEffect(() => {
     socket.onmessage = (event) => {
-      console.log(`Received ${typeof event.data} packet of size ${event.data.length}`);
-      if (!(event.data instanceof Blob)) {
+      console.log(`Received ${typeof event.data} packet of size ${event.data.size || event.data.length}`);
+      if (event.data instanceof Blob) {
+        console.log("Received audio data");
+        event.data.arrayBuffer().then(buffer => {
+          console.log("ArrayBuffer content:", new Uint8Array(buffer));
+        }).catch(error => {
+          console.error("Error reading Blob data:", error);
+        });
+        audioQueue.current.push(event.data); // Add incoming audio blob to the queue
+        if (audioElement.current?.paused) {
+          playNextAudio(); // Play immediately if not playing anything else
+        }
+      } else {
         try {
           const parsedMessage = JSON.parse(event.data);
           if (parsedMessage && typeof parsedMessage.content === 'string') {
@@ -72,12 +85,6 @@ export const useTextStream = ({
           }
         } catch (error) {
           console.error('Error parsing message:', error);
-        }
-      } else {
-        console.log("Received audio data");
-        audioQueue.current.push(event.data); // Add incoming audio blob to the queue
-        if (audioElement.current?.paused) {
-          playNextAudio(); // Play immediately if not playing anything else
         }
       }
     };

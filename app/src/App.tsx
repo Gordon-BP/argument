@@ -16,6 +16,7 @@ const App: React.FC<AppProps> = ({ socket }) => {
   const { input, setInput, messages, currentBotMessage, currentUserMessage, handleSubmit } = useTextStream({
     socket,
     conversationId,
+    audioElement,
   });
 
   useEffect(() => {

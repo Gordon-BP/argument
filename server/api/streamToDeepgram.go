@@ -52,6 +52,8 @@ func listenForResponses(conn *websocket.Conn, outChan chan<- string, stopChan <-
 		select {
 		case <-stopChan:
 			fmt.Printf("Stopping deepgram websocket listener")
+			close(outChan)
+			conn.Close()
 			return
 		default:
 			// Otherwise, listen for incoming responses
@@ -85,31 +87,38 @@ func listenForResponses(conn *websocket.Conn, outChan chan<- string, stopChan <-
 // shape to send to the client as a user message.
 // Then the raw text is collected into a single full transcript
 // and this transcript is pushed into the output channel
-func SendTranscriptToClient(inputChannel chan string, outputChannel chan string, writeChan chan<- utils.WebSocketPacket) {
+func SendTranscriptToClient(inputChannel chan string, outputChannel chan string, writeChan chan<- utils.WebSocketPacket, stopChan <-chan bool) {
 	var fullTranscript string // Accumulate the transcript
 
 	for result := range inputChannel {
-		log.Println("Transcript:", result)
-		fullTranscript += result
+		select {
+		case <-stopChan:
+			fmt.Printf("Stopping transcript stream to user")
+			break
 
-		// Create the JSON structure
-		response := utils.MessageObj{
-			Content: result,
-			Role:    "user",
-			Name:    "user",
-		}
+		default:
+			log.Println("Transcript:", result)
+			fullTranscript += result
 
-		// Marshal the struct to JSON
-		jsonResponse, err := json.Marshal(response)
-		if err != nil {
-			log.Println("Error marshaling JSON:", err)
-			continue
-		}
+			// Create the JSON structure
+			response := utils.MessageObj{
+				Content: result,
+				Role:    "user",
+				Name:    "user",
+			}
 
-		// Send the JSON to be written to the websocket
-		writeChan <- utils.WebSocketPacket{
-			Type: utils.TextMessage,
-			Data: jsonResponse,
+			// Marshal the struct to JSON
+			jsonResponse, err := json.Marshal(response)
+			if err != nil {
+				log.Println("Error marshaling JSON:", err)
+				continue
+			}
+
+			// Send the JSON to be written to the websocket
+			writeChan <- utils.WebSocketPacket{
+				Type: utils.TextMessage,
+				Data: jsonResponse,
+			}
 		}
 	}
 

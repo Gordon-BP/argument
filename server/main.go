@@ -8,7 +8,6 @@ import (
 	"go-websocket-server/utils" // Import utils for DB initialization
 	"log"
 	"net/http"
-	"time"
 )
 
 // Upgrader for handling WebSocket connections.
@@ -66,7 +65,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// SendAudioToClient - Sends audio from deepgram as a single file
 
 	userMessage := make(chan string) // Channel for entire user transcript as a single string
-	go api.SendTranscriptToClient(userTranscript, userMessage, writeChan)
+	go api.SendTranscriptToClient(userTranscript, userMessage, writeChan, stopChan)
 
 	botAudio := make(chan []byte)
 	go api.SendAudioToClient(botAudio, writeChan)
@@ -90,24 +89,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if message.Type == "audioEnd" {
 				log.Println("Received audioEnd message, waiting for final transcripts")
 				stopChan <- true // tell the listener to stop
-				log.Println("Closing transcriptChan")
-				close(userTranscript)
 				// Wait for all transcripts to be processed and returned
+				// This is taking waaaay too long!!
 				fullTranscript := <-userMessage
 				message.Text = fullTranscript
 				log.Printf("Full transcript is %s", fullTranscript)
-				// Properly close the Deepgram WebSocket and the client WebSocket
-				go func() {
-					log.Println("Closing Deepgram WebSocket connection")
-					if err := deepgramConn.Close(); err != nil {
-						log.Println("Error closing Deepgram WebSocket:", err)
-					}
-
-					log.Println("Closing client WebSocket connection")
-					if err := conn.Close(); err != nil {
-						log.Println("Error closing client WebSocket:", err)
-					}
-				}()
 			}
 			log.Printf("Sending text to llama: %s", message.Text)
 
@@ -123,7 +109,16 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			// Send the audio chunk to Deepgram directly
 			err := deepgramConn.WriteMessage(websocket.BinaryMessage, p)
 			if err != nil {
-				log.Println("Error sending chunk to Deepgram:", err)
+				// Reconnect and try again
+				deepgramConn, err := api.NewDeepgramConnection(userTranscript, stopChan)
+				if err != nil {
+					log.Fatalf("Failed to connect to Deepgram: %v", err)
+				} else {
+					err := deepgramConn.WriteMessage(websocket.BinaryMessage, p)
+					if err != nil {
+						log.Fatal("Failed to re-connect to Deepgram:", err)
+					}
+				}
 			} else {
 				log.Println("Successfully sent chunk to Deepgram")
 			}
