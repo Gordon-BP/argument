@@ -11,6 +11,7 @@ const App: React.FC<AppProps> = ({ socket }) => {
   const [conversationId, setConversationId] = useState<string>('');
   const [status, setStatus] = useState<string>('Press and hold Space Bar to record');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const audioElement = useRef<HTMLAudioElement | null>(null);
 
   const { input, setInput, messages, currentBotMessage, currentUserMessage, handleSubmit } = useTextStream({
     socket,
@@ -62,6 +63,7 @@ const App: React.FC<AppProps> = ({ socket }) => {
         />
         <button type="submit">Send</button>
       </form>
+      <audio ref={audioElement} />
       <AudioRecorder onUpdateStatus={setStatus}
         conversationId={conversationId} socket={socket} />
       <p>{status}</p>

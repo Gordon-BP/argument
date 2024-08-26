@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 interface Message {
   text: string;
@@ -27,6 +27,8 @@ export const useTextStream = ({
   const [currentBotMessage, setCurrentBotMessage] = useState('');
   const [currentUserMessage, setCurrentUserMessage] = useState('');
   const [incomingChunks, setIncomingChunks] = useState<IncomingChunk[]>([]);
+  const audioQueue = useRef<Blob[]>([]); // Queue for audio blobs
+  const audioElement = useRef<HTMLAudioElement | null>(null);
 
   const handleSubmit = () => {
     if (input.trim()) {
@@ -42,26 +44,47 @@ export const useTextStream = ({
       );
 
       setInput('');
-      setCurrentBotMessage('');
-      setCurrentUserMessage(''); // Clear user message after sending
+      setCurrentBotMessage(''); // Clear bot message after sending
       setIncomingChunks([]);
+    }
+  };
+
+  const playNextAudio = () => {
+    if (audioQueue.current.length > 0) {
+      const nextAudioBlob = audioQueue.current.shift(); // Get the next audio blob
+      if (nextAudioBlob && audioElement.current) {
+        const audioUrl = URL.createObjectURL(nextAudioBlob);
+        audioElement.current.src = audioUrl;
+        audioElement.current.play();
+      }
     }
   };
 
   useEffect(() => {
     socket.onmessage = (event) => {
-      try {
-        const parsedMessage = JSON.parse(event.data);
-        console.log(parsedMessage);
-
-        if (parsedMessage && typeof parsedMessage.content === 'string') {
-          // Handle incoming chunks
-          setIncomingChunks((prev) => [...prev, parsedMessage]);
+      console.log(`Received ${typeof event.data} packet of size ${event.data.length}`);
+      if (!(event.data instanceof Blob)) {
+        try {
+          const parsedMessage = JSON.parse(event.data);
+          if (parsedMessage && typeof parsedMessage.content === 'string') {
+            // Handle incoming chunks
+            setIncomingChunks((prev) => [...prev, parsedMessage]);
+          }
+        } catch (error) {
+          console.error('Error parsing message:', error);
         }
-      } catch (error) {
-        console.error('Error parsing message:', error);
+      } else {
+        console.log("Received audio data");
+        audioQueue.current.push(event.data); // Add incoming audio blob to the queue
+        if (audioElement.current?.paused) {
+          playNextAudio(); // Play immediately if not playing anything else
+        }
       }
     };
+
+    if (audioElement.current) {
+      audioElement.current.onended = playNextAudio; // Set up event listener for when the current audio finishes
+    }
 
     return () => {
       socket.close();
@@ -95,9 +118,7 @@ export const useTextStream = ({
           } else if (chunk.role === 'bot') {
             console.log(`Bot message: ${chunk.content}`);
             const updatedBotMessage = currentBotMessage + ' ' + chunk.content;
-
             setCurrentBotMessage(updatedBotMessage);
-
           }
 
           return prevMessages;
@@ -109,12 +130,13 @@ export const useTextStream = ({
       return () => clearTimeout(timer);
     }
   }, [incomingChunks, chunkDelay, currentBotMessage]);
+
   return {
     input,
     setInput,
     messages,
     currentBotMessage,
-    currentUserMessage, // Include currentUserMessage in the return object
+    currentUserMessage,
     handleSubmit,
   };
 };

@@ -44,18 +44,35 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
+	// Single channel for outbound data on the websocket
+	writeChan := make(chan utils.WebSocketPacket)
+	go utils.WriteToWebsocket(writeChan, conn)
 	// Initialize Deepgram WebSocket connection
-	transcriptChan := make(chan string) // channel for audio transcript
-	deepgramConn, err := api.NewDeepgramConnection(transcriptChan)
+	// and channel to hold the user transcript stream
+	userTranscript := make(chan string) // channel for streaming audio transcript
+	stopChan := make(chan bool)
+	// Part of initializing the deepgram connection is listening for packets
+	// and sending them to the userTranscript channel
+	deepgramConn, err := api.NewDeepgramConnection(userTranscript, stopChan)
 	if err != nil {
 		log.Fatalf("Failed to connect to Deepgram: %v", err)
 	}
 	defer conn.Close() // Ensure the connection is closed when done.
 	defer deepgramConn.Close()
 
-	// Goroutine to handle transcript results separately
-	doneChan := make(chan string)
-	go api.SendToClient(transcriptChan, conn, doneChan)
+	// These three goroutines handle sending data back to the user:
+	// SendTranscriptToClient - Streams STT data from the deepgram websocket as a user message
+	// SendTextToClient - Streams text from Groq as a bot message
+	// SendAudioToClient - Sends audio from deepgram as a single file
+
+	userMessage := make(chan string) // Channel for entire user transcript as a single string
+	go api.SendTranscriptToClient(userTranscript, userMessage, writeChan)
+
+	botAudio := make(chan []byte)
+	go api.SendAudioToClient(botAudio, writeChan)
+
+	botText := make(chan string)
+	go api.SendTextToClient(botText, writeChan)
 
 	for {
 		messageType, p, err := conn.ReadMessage()
@@ -72,15 +89,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			if message.Type == "audioEnd" {
 				log.Println("Received audioEnd message, waiting for final transcripts")
-				time.Sleep(2 * time.Second)
-				close(transcriptChan)
+				stopChan <- true // tell the listener to stop
+				log.Println("Closing transcriptChan")
+				close(userTranscript)
 				// Wait for all transcripts to be processed and returned
-				fullTranscript := <-doneChan
+				fullTranscript := <-userMessage
 				message.Text = fullTranscript
 				log.Printf("Full transcript is %s", fullTranscript)
 				// Properly close the Deepgram WebSocket and the client WebSocket
 				go func() {
-					time.Sleep(2 * time.Second) // Optional sleep for final processing
 					log.Println("Closing Deepgram WebSocket connection")
 					if err := deepgramConn.Close(); err != nil {
 						log.Println("Error closing Deepgram WebSocket:", err)
@@ -98,26 +115,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				log.Println("Error: ConversationID is empty")
 				continue
 			}
+			go api.AskLlama(message.ConversationID, message.Text, botText, botAudio)
 
-			resultsChan := make(chan string)
-			go api.StreamResponses(message.ConversationID, message.Text, resultsChan)
-
-			log.Println("Streaming response back to client...")
-			for result := range resultsChan {
-				msg := utils.MessageObj{
-					Content: result,
-					Role:    "bot",
-					Name:    "bot",
-				}
-				msgJSON, err := json.Marshal(msg)
-				if err != nil {
-					log.Println("Error marshalling JSON:", err)
-				}
-				if err := conn.WriteMessage(websocket.TextMessage, msgJSON); err != nil {
-					log.Println(err)
-					return
-				}
-			}
 		} else if messageType == websocket.BinaryMessage {
 			log.Printf("Received %d bytes of audio data", len(p))
 

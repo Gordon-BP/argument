@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface AudioProps {
   socket: WebSocket;
@@ -41,9 +41,6 @@ const AudioRecorder: React.FC<AudioProps> = ({ socket, conversationId,
     getMicrophone();
   }, []);
 
-
-
-
   const handleStopRecording = async () => {
     setRecording(false);
     onUpdateStatus("Processing speech to text...");
@@ -59,6 +56,7 @@ const AudioRecorder: React.FC<AudioProps> = ({ socket, conversationId,
     audioRecorder?.stop();
     socket.send(JSON.stringify({ type: 'audioEnd', conversationId }));
   };
+
 
   // Keyboard event handlers for starting and stopping the audio recorder.
   useEffect(() => {
@@ -83,7 +81,9 @@ const AudioRecorder: React.FC<AudioProps> = ({ socket, conversationId,
     };
   }, [audioRecorder, recording]);
 
-  return <div>{/* Additional UI can go here */}</div>;
+  return <div>
+    {/* Additional UI can go here */}
+  </div>;
 };
 
 export default AudioRecorder;

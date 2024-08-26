@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/websocket"
 	"go-websocket-server/utils"
 	"io"
 	"log"
@@ -27,8 +28,13 @@ type Data struct {
 	Choices []Choice `json:"choices"`
 }
 
-func StreamResponses(conversationId string, userMessage string,
-	resultsChan chan<- string) {
+// Main function to interact with the LLM
+// Fetches history from sqlite
+// then sends the whole packet to the LLM
+// and streams its response into outputChan
+// The completed response is then sent to deepgram TTS
+// which will output to audioChan
+func AskLlama(conversationId string, userMessage string, textOut chan<- string, audioOut chan<- []byte) {
 	url := "https://api.groq.com/openai/v1/chat/completions"
 
 	// Get conversation history
@@ -109,7 +115,8 @@ func StreamResponses(conversationId string, userMessage string,
 			resp.StatusCode)
 		body, _ := io.ReadAll(resp.Body)
 		log.Printf("Response body: %s", string(body))
-		close(resultsChan)
+		close(textOut)
+		close(audioOut)
 		return
 	}
 	// Initialize a string buffer to collect the entire bot response
@@ -145,7 +152,7 @@ func StreamResponses(conversationId string, userMessage string,
 		if len(data.Choices) > 0 && data.Choices[0].Delta.Content !=
 			"" {
 			botResponseBuffer.WriteString(data.Choices[0].Delta.Content) // Accumulate the bot's response
-			resultsChan <- string(data.Choices[0].Delta.Content)
+			textOut <- string(data.Choices[0].Delta.Content)
 		}
 	}
 	// Save the bot's response to the database
@@ -158,9 +165,35 @@ func StreamResponses(conversationId string, userMessage string,
 			log.Printf("Bot response saved successfully. Length: %d",
 				len(botResponse))
 		}
+		// Goroutine to do TTS on the output
+		go SendToDeepgramTTS(botResponse, audioOut)
 	} else {
 		log.Println("Warning: Bot response was empty")
 	}
 	// Close the results channel when done to signal completion
-	close(resultsChan)
+	close(textOut)
+}
+
+// Function that takes a stream of text as an input
+// Then puts the text in the right shape for a bot message before sending it to the client.
+func SendTextToClient(inputChannel chan string, writeChan chan<- utils.WebSocketPacket) {
+	fullTranscript := ""
+	for text := range inputChannel {
+		fullTranscript += text
+		// Put text into the right shape to send back to the frontend
+		msg := utils.MessageObj{
+			Content: text,
+			Role:    "bot",
+			Name:    "bot",
+		}
+		msgJSON, err := json.Marshal(msg)
+		if err != nil {
+			log.Println("Error marshalling JSON:", err)
+		}
+		writeChan <- utils.WebSocketPacket{
+			Type: utils.TextMessage,
+			Data: msgJSON,
+		}
+
+	}
 }
