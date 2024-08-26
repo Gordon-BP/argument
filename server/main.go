@@ -36,6 +36,26 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
+// These three goroutines handle sending data back to the user:
+// SendTranscriptToClient - Streams STT data from the deepgram websocket as a user message
+// SendTextToClient - Streams text from Groq as a bot message
+// SendAudioToClient - Sends audio from deepgram as a single file
+func makeTurnChannels(userTranscript chan string,
+	writeChan chan utils.WebSocketPacket,
+	stopChan chan bool) (userMessage chan string,
+	botAudio chan []byte,
+	botText chan string) {
+	userMessage = make(chan string) // Channel for entire user transcript as a single string
+	go api.SendTranscriptToClient(userTranscript, userMessage, writeChan, stopChan)
+
+	botAudio = make(chan []byte)
+	go api.SendAudioToClient(botAudio, writeChan)
+
+	botText = make(chan string)
+	go api.SendTextToClient(botText, writeChan)
+	return userMessage, botAudio, botText
+}
+
 // handleWebSocket handles incoming WebSocket data packets.
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil) // Upgrade to a WebSocket connection.
@@ -58,20 +78,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close() // Ensure the connection is closed when done.
 	defer deepgramConn.Close()
-
-	// These three goroutines handle sending data back to the user:
-	// SendTranscriptToClient - Streams STT data from the deepgram websocket as a user message
-	// SendTextToClient - Streams text from Groq as a bot message
-	// SendAudioToClient - Sends audio from deepgram as a single file
-
-	userMessage := make(chan string) // Channel for entire user transcript as a single string
-	go api.SendTranscriptToClient(userTranscript, userMessage, writeChan, stopChan)
-
-	botAudio := make(chan []byte)
-	go api.SendAudioToClient(botAudio, writeChan)
-
-	botText := make(chan string)
-	go api.SendTextToClient(botText, writeChan)
+	userMessage, botAudio, botText := makeTurnChannels(userTranscript, writeChan, stopChan)
 
 	for {
 		messageType, p, err := conn.ReadMessage()
@@ -102,6 +109,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			go api.AskLlama(message.ConversationID, message.Text, botText, botAudio)
+			// Re-open these two channels
+			userTranscript = make(chan string) // channel for streaming audio transcript
+			stopChan = make(chan bool)
+			userMessage, botAudio, botText = makeTurnChannels(userTranscript, writeChan, stopChan)
 
 		} else if messageType == websocket.BinaryMessage {
 			log.Printf("Received %d bytes of audio data", len(p))
@@ -110,13 +121,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			err := deepgramConn.WriteMessage(websocket.BinaryMessage, p)
 			if err != nil {
 				// Reconnect and try again
-				deepgramConn, err := api.NewDeepgramConnection(userTranscript, stopChan)
+				deepgramConn, err = api.NewDeepgramConnection(userTranscript, stopChan)
 				if err != nil {
 					log.Fatalf("Failed to connect to Deepgram: %v", err)
 				} else {
 					err := deepgramConn.WriteMessage(websocket.BinaryMessage, p)
 					if err != nil {
 						log.Fatal("Failed to re-connect to Deepgram:", err)
+					} else {
+						log.Println("Successfully sent chunk to deepgram on the second try")
 					}
 				}
 			} else {

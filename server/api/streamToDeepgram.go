@@ -7,9 +7,11 @@ import (
 	"go-websocket-server/utils"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 type Response struct {
@@ -39,7 +41,7 @@ func NewDeepgramConnection(outChan chan<- string, stopChan <-chan bool) (*websoc
 		log.Fatal("Dial:", err)
 		return nil, err
 	}
-	log.Println("Connected to Deepgram")
+	log.Println("Connected to Deepgram STT")
 
 	go listenForResponses(conn, outChan, stopChan)
 	return conn, nil
@@ -47,22 +49,41 @@ func NewDeepgramConnection(outChan chan<- string, stopChan <-chan bool) (*websoc
 
 // listenForResponses listens for responses from Deepgram
 func listenForResponses(conn *websocket.Conn, outChan chan<- string, stopChan <-chan bool) {
+	// Create a ticker that ticks at this interval
+	const ticktime int64 = 2800
+	ticker := time.NewTicker(time.Duration(ticktime) * time.Millisecond)
+	defer func() {
+		log.Printf("Stopping deepgram websocket listener")
+		ticker.Stop()
+		close(outChan)
+		err := conn.Close()
+		if err != nil {
+			log.Printf("Error closing deepgram connection: %v", err)
+		}
+	}()
 	for {
-		// Check if it is time to stop
 		select {
 		case <-stopChan:
-			fmt.Printf("Stopping deepgram websocket listener")
-			close(outChan)
-			conn.Close()
 			return
-		default:
-			// Otherwise, listen for incoming responses
+		case <-ticker.C:
+			// Poll for incoming messages from the WebSocket
+			conn.SetReadDeadline(time.Now().Add(time.Duration(ticktime) * time.Millisecond))
 			_, message, err := conn.ReadMessage()
 			if err != nil {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure) || websocket.IsUnexpectedCloseError(err) {
+					log.Println("WebSocket closed:", err)
+					return
+				}
+				// If it's a timeout error, continue polling
+				if nErr, ok := err.(net.Error); ok && nErr.Timeout() {
+					log.Println("tick")
+					continue
+				}
 				log.Println("Error listening for responses:", err)
 				return
 			}
-			log.Printf("Received message from Deepgram: %s", message) //Log raw messages
+
+			log.Printf("Received message from Deepgram: %s", message) // Log raw messages
 
 			var response Response
 			if err := json.Unmarshal(message, &response); err != nil {
@@ -93,7 +114,7 @@ func SendTranscriptToClient(inputChannel chan string, outputChannel chan string,
 	for result := range inputChannel {
 		select {
 		case <-stopChan:
-			fmt.Printf("Stopping transcript stream to user")
+			log.Printf("Stopping transcript stream to user")
 			break
 
 		default:
