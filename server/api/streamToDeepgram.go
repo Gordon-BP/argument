@@ -7,7 +7,6 @@ import (
 	"go-websocket-server/utils"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -49,14 +48,19 @@ func NewDeepgramConnection(outChan chan<- string, stopChan <-chan bool) (*websoc
 
 // listenForResponses listens for responses from Deepgram
 func listenForResponses(conn *websocket.Conn, outChan chan<- string, stopChan <-chan bool) {
-	// Create a ticker that ticks at this interval
-	const ticktime int64 = 2800
-	ticker := time.NewTicker(time.Duration(ticktime) * time.Millisecond)
+	// Poll for incoming messages from the WebSocket
+	pongTimeout := time.Duration(4000 * time.Millisecond)
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongTimeout))
+		return nil
+	})
+	// By deferring stopping everything, we reduce copied code
 	defer func() {
-		log.Printf("Stopping deepgram websocket listener")
-		ticker.Stop()
+		log.Println("Closing listener output channel")
 		close(outChan)
-		err := conn.Close()
+		log.Printf("Stopping deepgram websocket listener")
+		m := "{\"type\":\"CloseStream\"}"
+		err := conn.WriteMessage(websocket.TextMessage, []byte(m))
 		if err != nil {
 			log.Printf("Error closing deepgram connection: %v", err)
 		}
@@ -64,27 +68,22 @@ func listenForResponses(conn *websocket.Conn, outChan chan<- string, stopChan <-
 	for {
 		select {
 		case <-stopChan:
+			log.Println("Stop signal received")
 			return
-		case <-ticker.C:
-			// Poll for incoming messages from the WebSocket
-			conn.SetReadDeadline(time.Now().Add(time.Duration(ticktime) * time.Millisecond))
+		default:
 			_, message, err := conn.ReadMessage()
 			if err != nil {
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure) || websocket.IsUnexpectedCloseError(err) {
-					log.Println("WebSocket closed:", err)
+				if websocket.IsUnexpectedCloseError(err,
+					websocket.CloseGoingAway,
+					websocket.CloseAbnormalClosure) {
+					log.Printf("error: %v", err)
 					return
-				}
-				// If it's a timeout error, continue polling
-				if nErr, ok := err.(net.Error); ok && nErr.Timeout() {
-					log.Println("tick")
-					continue
 				}
 				log.Println("Error listening for responses:", err)
 				return
 			}
 
 			log.Printf("Received message from Deepgram: %s", message) // Log raw messages
-
 			var response Response
 			if err := json.Unmarshal(message, &response); err != nil {
 				log.Printf("Error decoding JSON message: %v", err)
@@ -95,8 +94,18 @@ func listenForResponses(conn *websocket.Conn, outChan chan<- string, stopChan <-
 				for _, alternative := range response.Channel.Alternatives {
 					if alternative.Transcript != "" {
 						log.Println("Transcript sent to channel:", alternative.Transcript)
-						outChan <- alternative.Transcript // Send the transcript through the channel
+						outChan <- alternative.Transcript + " " // Send the transcript through the channel
 					}
+				}
+				//Check for a stop signal after processing the websocket data too
+				// This way we don't have to wait for another websocket packet
+				// to check for a stop signal.
+				select {
+				case <-stopChan:
+					log.Println("Stop signal received")
+					return
+				default:
+					continue
 				}
 			}
 		}
@@ -145,10 +154,13 @@ func SendTranscriptToClient(inputChannel chan string, outputChannel chan string,
 
 	// After the loop ends, send the full transcript to the doneChan
 	log.Println("Sending final transcript to output")
-	outputChannel <- string(fullTranscript)
+	outputChannel <- fullTranscript
 	log.Println("Final transcript sent, closing output")
 	close(outputChannel) // Close the doneChan to signal completion
 }
+
+// Sends text in one big batch to deepgram API
+// TODO: take in a stream of text, chunk it by sentence, and send each sentence to the TTS
 func SendToDeepgramTTS(text string, outChan chan<- []byte) {
 	url := "https://api.deepgram.com/v1/speak?model=aura-helios-en"
 
@@ -179,6 +191,7 @@ func SendToDeepgramTTS(text string, outChan chan<- []byte) {
 	}
 	log.Printf("Successfully received %d bytes from deepgram", len(audioData))
 	outChan <- audioData
+	close(outChan)
 
 }
 func SendAudioToClient(inputChannel chan []byte, writeChan chan<- utils.WebSocketPacket) {
