@@ -31,4 +31,4 @@ A single conversational turn follows this pattern:
 6. Response audio from Deepgram TTS is sent to the client for playback.
 7. Once all text has been received from Groq, it is collected and stored in SQLite to provide context for the next message.
 
-The process works in close to real-time, with less than 1 second of delay between end of user audio and first text token, and and additional second before the first audio token.
+The process works in close to real-time, with less than 1 second of delay between end of user audio and first text token, and and additional second before the first audio token. See [strawberry.mkv](strawberry.mkv) for an unedited recording of the interface in action.
