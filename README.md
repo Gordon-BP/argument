@@ -1,12 +1,14 @@
 # Text & Audio UI Demo
+## A chatbot user interface that streams text and audio simultaneously between the user and the LLM.
 ![A gif showing the UI in action](stream-demo.gif)
-A chatbot user interface that streams text and audio simultaneously between the user and the LLM.
 
 ## Tech stack
 * React frontend
 * Go backend
 * Deepgram for speech-to-text (STT) and text-to-speech (TTS)
 * Groq Llama 3.1 8B "instant" as the LLM
+
+![A fun banner showing off the technologies used](techStackBanner.png)
 
 ## Setting it up
 After cloning the repo, you will need to make your own `.env` in `/server/.env` with your Groq and Deepgram API keys. See the example file for guidance.
