@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -160,8 +161,10 @@ func SendTranscriptToClient(inputChannel chan string, outputChannel chan string,
 }
 
 // Sends text in one big batch to deepgram API
-// TODO: take in a stream of text, chunk it by sentence, and send each sentence to the TTS
-func SendToDeepgramTTS(text string, outChan chan<- []byte) {
+func SendToDeepgramTTS(text string, rateLimitTicker *time.Ticker, mu *sync.Mutex, outChan chan<- []byte) {
+	<-rateLimitTicker.C
+	mu.Lock() //Ensure only one API call at a time goes out
+	defer mu.Unlock()
 	url := "https://api.deepgram.com/v1/speak?model=aura-helios-en"
 
 	apiKey := os.Getenv("DEEPGRAM_API_KEY")
@@ -189,11 +192,11 @@ func SendToDeepgramTTS(text string, outChan chan<- []byte) {
 	if err != nil {
 		return
 	}
-	log.Printf("Successfully received %d bytes from deepgram", len(audioData))
+	log.Printf("Successfully received %d bytes of audio from deepgram", len(audioData))
 	outChan <- audioData
-	close(outChan)
 
 }
+
 func SendAudioToClient(inputChannel chan []byte, writeChan chan<- utils.WebSocketPacket) {
 	for audio := range inputChannel {
 		log.Printf("Sending %d bytes of audio to client", len(audio))

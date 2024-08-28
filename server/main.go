@@ -43,17 +43,20 @@ func main() {
 func makeTurnChannels(userTranscript chan string,
 	writeChan chan utils.WebSocketPacket,
 	stopChan chan bool) (userMessage chan string,
-	botAudio chan []byte,
-	botText chan string) {
+	botTextForClient chan string,
+	botTextForTTS chan string,
+) {
 	userMessage = make(chan string) // Channel for entire user transcript as a single string
 	go api.SendTranscriptToClient(userTranscript, userMessage, writeChan, stopChan)
 
-	botAudio = make(chan []byte)
+	botAudio := make(chan []byte)
 	go api.SendAudioToClient(botAudio, writeChan)
 
-	botText = make(chan string)
-	go api.SendTextToClient(botText, writeChan)
-	return userMessage, botAudio, botText
+	botTextForClient = make(chan string)
+	botTextForTTS = make(chan string)
+	go api.BufferTextForTTS(botTextForTTS, botAudio)
+	go api.SendTextToClient(botTextForClient, writeChan)
+	return userMessage, botTextForClient, botTextForTTS
 }
 
 // handleWebSocket handles incoming WebSocket data packets.
@@ -77,7 +80,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Fatalf("Failed to connect to Deepgram: %v", err)
 	}
 	defer conn.Close() // Ensure the connection is closed when done.
-	userMessage, botAudio, botText := makeTurnChannels(userTranscript, writeChan, stopChan)
+	userMessage, botTextForClient, botTextForTTS := makeTurnChannels(userTranscript, writeChan, stopChan)
 
 	for {
 		messageType, p, err := conn.ReadMessage()
@@ -114,12 +117,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				log.Println("Error: ConversationID is empty")
 				continue
 			}
-			go api.AskLlama(message.ConversationID, message.Text, botText, botAudio)
+			go api.AskLlama(message.ConversationID, message.Text, botTextForClient, botTextForTTS)
 			// Re-open these two channels
 			log.Println("Re-opening channels")
 			userTranscript = make(chan string)
 			stopChan = make(chan bool)
-			userMessage, botAudio, botText = makeTurnChannels(userTranscript, writeChan, stopChan)
+			userMessage, botTextForClient, botTextForTTS = makeTurnChannels(userTranscript, writeChan, stopChan)
 			deepgramConn, err = api.NewDeepgramConnection(userTranscript, stopChan)
 
 		} else if messageType == websocket.BinaryMessage {

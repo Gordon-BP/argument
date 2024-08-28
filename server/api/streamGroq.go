@@ -10,7 +10,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
 
 type GroqPostData struct {
@@ -33,7 +36,7 @@ type Data struct {
 // and streams its response into outputChan
 // The completed response is then sent to deepgram TTS
 // which will output to audioChan
-func AskLlama(conversationId string, userMessage string, textOut chan<- string, audioOut chan<- []byte) {
+func AskLlama(conversationId string, userMessage string, textForClient chan<- string, textForTTS chan<- string) {
 	url := "https://api.groq.com/openai/v1/chat/completions"
 
 	// Get conversation history
@@ -114,8 +117,8 @@ func AskLlama(conversationId string, userMessage string, textOut chan<- string, 
 			resp.StatusCode)
 		body, _ := io.ReadAll(resp.Body)
 		log.Printf("Response body: %s", string(body))
-		close(textOut)
-		close(audioOut)
+		close(textForClient)
+		close(textForTTS)
 		return
 	}
 	// Initialize a string buffer to collect the entire bot response
@@ -150,8 +153,11 @@ func AskLlama(conversationId string, userMessage string, textOut chan<- string, 
 
 		if len(data.Choices) > 0 && data.Choices[0].Delta.Content !=
 			"" {
-			botResponseBuffer.WriteString(data.Choices[0].Delta.Content) // Accumulate the bot's response
-			textOut <- string(data.Choices[0].Delta.Content)
+			// Accumulate the bot's response in a buffer
+			botResponseBuffer.WriteString(data.Choices[0].Delta.Content)
+			// Stream data to text out channels
+			textForClient <- string(data.Choices[0].Delta.Content)
+			textForTTS <- string(data.Choices[0].Delta.Content)
 		}
 	}
 	// Save the bot's response to the database
@@ -161,16 +167,53 @@ func AskLlama(conversationId string, userMessage string, textOut chan<- string, 
 		if err != nil {
 			log.Printf("Failed to save bot response: %v", err)
 		} else {
-			log.Printf("Bot response saved successfully. Length: %d",
-				len(botResponse))
+			log.Println("Bot response saved successfully: ", botResponse)
 		}
-		// Goroutine to do TTS on the output
-		go SendToDeepgramTTS(botResponse, audioOut)
 	} else {
 		log.Println("Warning: Bot response was empty")
 	}
 	// Close the results channel when done to signal completion
-	close(textOut)
+	close(textForClient)
+	close(textForTTS)
+}
+
+// Function that takes a stream of text as an input
+// Buffers it, then sends each full sentence to Deepgram TTS
+func BufferTextForTTS(inputStream chan string, audioOut chan<- []byte) {
+	rateLimitTicker := time.NewTicker(1 * time.Second)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var textBuffer string
+	var eosRegex = regexp.MustCompile("([^!?\n]+[.!?\n])")
+	for text := range inputStream {
+		// Accumulate text in a per-sentence buffer
+		textBuffer += text
+		// Split sentence buffer by sentence (if applicable)
+		sentences := eosRegex.FindAllString(textBuffer, -1)
+		if len(sentences) > 1 {
+			//merge all but the last partial sentence into one text
+			text := strings.Trim(strings.Join(sentences[:len(sentences)-1], " "), " ")
+			// set the text buffer to the partial sentence and clear the sentences array
+			textBuffer = sentences[len(sentences)-1]
+			clear(sentences)
+			log.Println("Chunked sentence: ", text)
+			wg.Add(1)
+			go func(text string) {
+				defer wg.Done()
+				SendToDeepgramTTS(text, rateLimitTicker, &mu, audioOut)
+			}(text)
+		}
+	}
+	// Send whatever is left to TTS
+	log.Println("Remaining text: ", textBuffer)
+	wg.Add(1)
+	go func(text string) {
+		defer wg.Done()
+		SendToDeepgramTTS(text, rateLimitTicker, &mu, audioOut)
+	}(textBuffer)
+	wg.Wait() // Wait for all goroutines to finish
+	close(audioOut)
+	rateLimitTicker.Stop()
 }
 
 // Function that takes a stream of text as an input
