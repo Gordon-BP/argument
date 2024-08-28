@@ -2,6 +2,7 @@
 ## A chatbot user interface that streams text and audio simultaneously between the user and the LLM.
 ![A gif showing the UI in action](stream-demo.gif)
 
+## [Visit my blog for a behind-the-scenes post and more chatbot projects](www.hanakano.com)
 ## Tech stack
 * React frontend
 * Go backend
