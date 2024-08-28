@@ -29,8 +29,8 @@ export const useTextStream = ({
   const [currentBotMessage, setCurrentBotMessage] = useState('');
   const [currentUserMessage, setCurrentUserMessage] = useState('');
   const [incomingChunks, setIncomingChunks] = useState<IncomingChunk[]>([]);
+  const [messageIndex, setMessageIndex] = useState(0); // Add index to track message changes
   const audioQueue = useRef<Blob[]>([]); // Queue for audio blobs
-  //const audioElement = useRef<HTMLAudioElement | null>(null);
 
   const handleSubmit = () => {
     if (input.trim()) {
@@ -48,6 +48,7 @@ export const useTextStream = ({
       setInput('');
       setCurrentBotMessage(''); // Clear bot message after sending
       setIncomingChunks([]);
+      setMessageIndex(messageIndex + 1); // Increment index after sending
     }
   };
 
@@ -102,33 +103,32 @@ export const useTextStream = ({
     if (incomingChunks.length > 0) {
       const timer = setTimeout(() => {
         const chunk = incomingChunks[0];
+        const isUserMessage = chunk.role === 'user';
 
         setMessages((prevMessages) => {
           const lastMessageIndex = prevMessages.length - 1;
           const lastMessage = prevMessages[lastMessageIndex];
 
-          if (chunk.role === 'user') {
-            console.log(`User message: ${chunk.content}`);
-
-            if (lastMessage && lastMessage.isUser) {
-              // Update the last user message if it exists
-              const updatedMessages = [...prevMessages];
-              updatedMessages[lastMessageIndex] = {
-                ...lastMessage,
-                text: lastMessage.text + chunk.content,
-              };
-              return updatedMessages;
-            } else {
-              // Add a new user message if one doesn't exist
-              return [...prevMessages, { text: chunk.content, isUser: true }];
-            }
-          } else if (chunk.role === 'bot') {
-            console.log(`Bot message: ${chunk.content}`);
-            const updatedBotMessage = currentBotMessage + ' ' + chunk.content;
-            setCurrentBotMessage(updatedBotMessage);
+          if (
+            (isUserMessage && lastMessage && lastMessage.isUser) ||
+            (!isUserMessage && lastMessage && !lastMessage.isUser)
+          ) {
+            // Update the last message if it's from the same role
+            const updatedMessages = [...prevMessages];
+            updatedMessages[lastMessageIndex] = {
+              ...lastMessage,
+              text: lastMessage.text + chunk.content,
+            };
+            return updatedMessages;
+          } else {
+            // Role changed, create a new message
+            const newMessage = {
+              text: chunk.content,
+              isUser: isUserMessage,
+            };
+            setMessageIndex((prev) => prev + 1); // Increment index for new message
+            return [...prevMessages, newMessage];
           }
-
-          return prevMessages;
         });
 
         setIncomingChunks((prev) => prev.slice(1));
@@ -136,7 +136,7 @@ export const useTextStream = ({
 
       return () => clearTimeout(timer);
     }
-  }, [incomingChunks, chunkDelay, currentBotMessage]);
+  }, [incomingChunks, chunkDelay, messageIndex]);
 
   return {
     input,

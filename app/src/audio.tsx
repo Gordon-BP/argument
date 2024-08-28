@@ -47,7 +47,7 @@ const AudioRecorder: React.FC<AudioProps> = ({ socket, conversationId,
   };
 
   const startRecording = () => {
-    audioRecorder?.start(1000);
+    audioRecorder?.start(200);
     setRecording(true);
     onUpdateStatus('Recording started...');
   };
