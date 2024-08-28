@@ -1,5 +1,5 @@
 # Text & Audio UI Demo
-
+![A gif showing the UI in action](stream-demo.gif)
 A chatbot user interface that streams text and audio simultaneously between the user and the LLM.
 
 ## Tech stack
@@ -28,3 +28,5 @@ A single conversational turn follows this pattern:
     * If the response from Groq is super short and fast, it will get chunked as one sentence and sent to Deepgram as a single API call.
 6. Response audio from Deepgram TTS is sent to the client for playback.
 7. Once all text has been received from Groq, it is collected and stored in SQLite to provide context for the next message.
+
+The process works in close to real-time, with less than 1 second of delay between end of user audio and first text token, and and additional second before the first audio token.

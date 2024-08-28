@@ -30,8 +30,9 @@ const App: React.FC<AppProps> = ({ socket }) => {
 
   return (
     <div className="chat-app">
-      <h1>Chat App</h1>
+      <h1>Gordy's Text & Audio Streaming Chat UI</h1>
       <p>Conversation ID: {conversationId}</p>
+      <p> This is a demo UI showing how an LLM can stream audio and text at the same time to a user. It is built using React and Go, leverages websockets for connection, Deepgram for STT and TTS, and Groq Llama 3.1 8B as the llm.</p>
       <div className="chat-messages">
         {messages.map((message, index) => (
           <div key={index} className={`message ${message.isUser ? 'user' : 'bot'}`}>
